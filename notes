@@ -1,0 +1,74 @@
+#set ourselfs as RBAC admin
+kubectl create clusterrolebinding cluster-admin-binding \
+  --clusterrole=cluster-admin \
+  --user="$(gcloud config get-value core/account)"
+
+#Download Istio
+export ISTIO_VERSION=1.0.5 # set the version we want
+curl -L https://git.io/getLatestIstio | ISTIO_VERSION=${ISTIO_VERSION} sh - # download Istio
+cd istio-${ISTIO_VERSION}/ # change directory into Istio folder
+export PATH=${PWD}/bin:$PATH # add Istio to the path
+
+#Enable tiller - required for helm
+kubectl apply -f install/kubernetes/helm/helm-service-account.yaml
+helm init --service-account tiller
+
+
+#Install istio
+helm install install/kubernetes/helm/istio \
+    --name istio \
+    --namespace istio-system \
+    --set global.mtls.enabled=false \
+    --set grafana.enabled=true \
+    --set servicegraph.enabled=true \
+    --set tracing.enabled=true \
+    --set kiali.enabled=true
+
+    --set global.mtls.enabled=true \ # enable MTLS
+    --tls \ # install using TLS
+
+#Deploy bookinfo
+kubectl label namespace default istio-injection=enabled
+kubectl apply -f samples/bookinfo/platform/kube/bookinfo.yaml
+
+kubectl apply -f samples/bookinfo/networking/bookinfo-gateway.yaml
+
+
+export INGRESS_HOST=$(kubectl -n istio-system get service istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+export INGRESS_PORT=$(kubectl -n istio-system get service istio-ingressgateway -o jsonpath='{.spec.ports[?(@.name=="http2")].port}')
+export SECURE_INGRESS_PORT=$(kubectl -n istio-system get service istio-ingressgateway -o jsonpath='{.spec.ports[?(@.name=="https")].port}')
+export GATEWAY_URL=$INGRESS_HOST:$INGRESS_PORT
+echo http://${GATEWAY_URL}/productpage
+
+curl -o /dev/null -s -w "%{http_code}\n" http://${GATEWAY_URL}/productpage
+
+#Destination rule
+kubectl apply -f samples/bookinfo/networking/destination-rule-all.yaml
+
+kubectl get destinationrules
+kubectl get virtualservices
+kubectl get destinationrules
+kubectl get gateway
+kubectl get po
+
+# Route to v1
+kubectl apply -f samples/bookinfo/networking/virtual-service-all-v1.yaml
+# Jason
+kubectl apply -f samples/bookinfo/networking/virtual-service-reviews-test-v2.yaml
+# weight based routing
+kubectl apply -f samples/bookinfo/networking/virtual-service-all-v1.yaml
+kubectl apply -f samples/bookinfo/networking/virtual-service-reviews-50-v3.yaml
+kubectl apply -f samples/bookinfo/networking/virtual-service-reviews-v3.yaml
+
+
+#Grafana
+kubectl -n istio-system get svc prometheus
+kubectl -n istio-system get svc grafana
+
+kubectl -n istio-system port-forward $(kubectl -n istio-system get pod -l app=grafana -o jsonpath='{.items[0].metadata.name}') 3000:3000
+http://localhost:3000/dashboard/db/istio-mesh-dashboard
+
+# Kali
+kubectl -n istio-system get svc kiali
+kubectl -n istio-system port-forward $(kubectl -n istio-system get pod -l app=kiali -o jsonpath='{.items[0].metadata.name}') 20001:20001
+http://localhost:20001/

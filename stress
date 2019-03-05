@@ -1,0 +1,2 @@
+xargs -I % -P 8 curl "http://35.228.148.24/productpage" \
+< <(printf '%s\n' {1..10000})
